@@ -1,0 +1,98 @@
+#!/usr/bin/env python
+"""
+Reformats a VCF and a recombination map for empirical training
+"""
+
+from ReLERNN.imports import *
+from ReLERNN.helpers import *
+from ReLERNN.manager import *
+from ReLERNN.simulator import *
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-z','--map',dest='map',help='BED-formatted (i.e. zero-based) recombination map')
+    parser.add_argument('-v','--vcf',dest='vcf',help='Filtered and QC-checked VCF file. Important: Every row must correspond to a biallelic SNP with no missing data!')
+    parser.add_argument('-g','--genome',dest='genome',help='BED-formatted file corresponding to chromosomes and positions to evaluate')
+    parser.add_argument('-d','--projectDir',dest='outDir',help='Directory for all project output. NOTE: the same projectDir must be used for all functions of ReLERNN',default=None)
+    parser.add_argument('-t','--nCPU',dest='nCPU',help='Number of CPUs to use',type=int,default=1)
+    parser.add_argument('--phased',help='Treat genotypes as phased',default=False, action='store_true')
+    parser.add_argument('--unphased',dest='phased',help='Treat genotypes as unphased',action='store_false')
+    parser.add_argument('--phaseError',dest='phaseError',help='Fraction of bases simulated with incorrect phasing',type=float,default=0.0)
+    parser.add_argument('--maxWinSize',dest='winSizeMx',help='Max number of sites per window to train on. Important: too many sites causes problems in training (see README)!',type=int,default=1750)
+    parser.add_argument('--minSites',dest='minS',help='Minimum number of SNPs in a genomic window required to return a prediction', type=int, default = 50)
+    parser.add_argument('--fTrain',dest='fTrain',help='Number of training examples to simulate',type=float,default=0.8)
+    parser.add_argument('--fVali',dest='fVali',help='Number of validation examples to simulate',type=float,default=0.1)
+    parser.add_argument('--fTest',dest='fTest',help='Number of test examples to simulate',type=float,default=0.1)
+    args = parser.parse_args()
+  
+
+    # Ensure all required arguments are provided
+    if not args.vcf.endswith(".vcf"):
+        print('Error: VCF file must end in extension ".vcf"')
+        sys.exit(1)
+    if not args.outDir:
+        print("Warning: No project directory found, using current working directory.")
+        projectDir = os.getcwd()
+    else:
+        projectDir = args.outDir
+    
+
+    ## Set up the directory structure to store the simulations data.
+    time.sleep(0)
+    nProc = args.nCPU
+    trainDir = os.path.join(projectDir,"train")
+    valiDir = os.path.join(projectDir,"vali")
+    testDir = os.path.join(projectDir,"test")
+    networkDir = os.path.join(projectDir,"networks")
+    vcfDir = os.path.join(projectDir,"splitVCFs")
+
+
+    ## Make directories if they do not exist
+    for p in [projectDir,trainDir,valiDir,testDir,networkDir,vcfDir]:
+        if not os.path.exists(p):
+            os.makedirs(p)
+
+    
+    ## Read the genome file
+    chromosomes = []
+    with open(args.genome, "r") as fIN:
+        for line in fIN:
+            ar = line.split()
+            if len(ar)!=3:
+                print("Error: genome file must be formatted as a bed file (i.e.'chromosome     start     end')")
+                sys.exit(1)
+            chromosomes.append("{}:{}-{}".format(ar[0],ar[1],ar[2]))
+   
+
+    ## Pass params to the vcf manager    
+    manager_params = {
+            'vcf':args.vcf,
+            'winSizeMx':args.winSizeMx,
+            'chromosomes':chromosomes,
+            'vcfDir':vcfDir,
+            'projectDir':projectDir,
+            'networkDir':networkDir,
+            'phased':args.phased,
+            'minS':args.minS,
+              }
+    vcf_manager = Manager(**manager_params)
+    
+    
+    ## Split the VCF file
+    vcf_manager.splitVCF(nProc=nProc)
+    
+
+    ## Calculate nSites per window
+    wins, nSamps, maxS, maxLen = vcf_manager.countSites(nProc=nProc)
+
+
+    ## dump genotypes from VCF into train/vali/test and write their respective info.p files
+    vcf_manager.dumpGenotypes(wins=wins, recombMap=args.map, trainValiTest=[args.fTrain,args.fVali,args.fTest], nProc=nProc)
+    
+    
+    print("\n\n***ReLERNN_EMPIRICAL.py FINISHED!***\n")
+
+
+if __name__ == "__main__":
+	main()
