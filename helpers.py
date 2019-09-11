@@ -308,10 +308,7 @@ def runModels(ModelFuncPointer,
         resultsFilename = os.path.basename(trainFile)[:-4] + ".p"
         resultsFile = os.path.join("./results/",resultsFilename)
 
-    x,y = TrainGenerator.__getitem__(0, s2s)
-    print("================================")
-    print(x[0].shape,x[1].shape,y.shape,y[0].shape)
-    print("================================")
+    x,y = TrainGenerator.__getitem__(0)
     model = ModelFuncPointer(x,y)
 
     history = model.fit_generator(TrainGenerator,
@@ -322,7 +319,7 @@ def runModels(ModelFuncPointer,
         use_multiprocessing=False
         )
 
-    x,y = TestGenerator.__getitem__(0, s2s)
+    x,y = TestGenerator.__getitem__(0)
     predictions = model.predict(x)
 
     history.history['loss'] = np.array(history.history['loss'])
@@ -564,6 +561,70 @@ def plotResults(resultsFile,saveas):
 
     predictions = np.array([float(Y) for Y in results["predictions"]])
     realValues = np.array([float(X) for X in results["Y_test"]])
+
+    r_2 = round((np.corrcoef(predictions,realValues)[0,1])**2,5)
+
+    mae_0 = round(mae(realValues,predictions),4)
+    mse_0 = round(mse(realValues,predictions),4)
+    labels = "$R^{2} = $"+str(r_2)+"\n"+"$mae = $" + str(mae_0)+" | "+"$mse = $" + str(mse_0)
+
+    axes[0].scatter(realValues,predictions,marker = "o", color = 'tab:purple',s=5.0,alpha=0.6)
+
+    lims = [
+        np.min([axes[0].get_xlim(), axes[0].get_ylim()]),  # min of both axes
+        np.max([axes[0].get_xlim(), axes[0].get_ylim()]),  # max of both axes
+    ]
+    axes[0].set_xlim(lims)
+    axes[0].set_ylim(lims)
+    axes[0].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
+    axes[0].set_title(results["name"]+"\n"+labels,fontsize=6)
+
+    lossRowIndex = 1
+    axes[1].plot(results["loss"],label = "mae loss",color='tab:cyan')
+    axes[1].plot(results["val_loss"], label= "mae validation loss",color='tab:pink')
+
+    #axes[1].plot(results["mean_squared_error"],label = "mse loss",color='tab:green')
+    #axes[1].plot(results["val_mean_squared_error"], label= "mse validation loss",color='tab:olive')
+
+    axes[1].legend(frameon = False,fontsize = 6)
+    axes[1].set_ylabel("mse")
+
+    axes[0].set_ylabel(str(len(predictions))+" msprime predictions")
+    axes[0].set_xlabel(str(len(realValues))+" msprime real values")
+    fig.subplots_adjust(left=.15, bottom=.16, right=.85, top=.92,hspace = 0.5,wspace=0.4)
+    height = 7.00
+    width = 7.00
+
+    axes[0].grid()
+    fig.set_size_inches(height, width)
+    fig.savefig(saveas)
+
+#-------------------------------------------------------------------------------------------
+
+def plotResults_s2s(resultsFile,saveas):
+
+    '''
+    plotting code for testing a model on simulation.
+    using the resulting pickle file on a training run (resultsFile).
+    This function plots the results of the final test set predictions,
+    as well as validation loss as a function of Epochs during training.
+
+    '''
+
+    plt.rc('font', family='serif', serif='Times')
+    plt.rc('xtick', labelsize=6)
+    plt.rc('ytick', labelsize=6)
+    plt.rc('axes', labelsize=6)
+
+    results = pickle.load(open( resultsFile , "rb" ))
+
+    fig,axes = plt.subplots(2,1)
+    plt.subplots_adjust(hspace=0.5)
+
+    #predictions = np.array([float(Y) for Y in results["predictions"]])
+    #realValues = np.array([float(X) for X in results["Y_test"]])
+    predictions = np.concatenate(results["predictions"]).ravel()
+    realValues = np.concatenate(results["Y_test"]).ravel()
 
     r_2 = round((np.corrcoef(predictions,realValues)[0,1])**2,5)
 

@@ -42,6 +42,7 @@ class SequenceBatchGenerator(keras.utils.Sequence):
             posPadVal = 0,
             shuffleExamples = True,
             splitFLAG = False,
+            s2s = False
             ):
 
         self.treesDirectory = treesDirectory
@@ -50,7 +51,6 @@ class SequenceBatchGenerator(keras.utils.Sequence):
         self.infoDir = pickle.load(open(infoFilename,"rb"))
         if(targetNormalization != None):
             self.normalizedTargets = self.normalizeTargets()
-            self.normalizedTargets_s2s = self.normalizeTargets_s2s()
         self.batch_size = batchSize
         self.maxLen = maxLen
         self.frameWidth = frameWidth
@@ -65,6 +65,7 @@ class SequenceBatchGenerator(keras.utils.Sequence):
         self.indices = np.arange(self.infoDir["numReps"])
         self.shuffleExamples = shuffleExamples
         self.splitFLAG = splitFLAG
+        self.s2s = s2s
 
         if(shuffleExamples):
             np.random.shuffle(self.indices)
@@ -116,6 +117,38 @@ class SequenceBatchGenerator(keras.utils.Sequence):
 
         return haps,pos
 
+    def pad_targets(self,haplotypes,targets,maxSNPs=None,frameWidth=0,center=False):
+        '''
+        pads the haplotype and positions tensors
+        to be uniform with the largest tensor
+        '''
+
+        haps = haplotypes
+        tar = targets
+
+        #Normalize the shape of all haplotype vectors with padding
+        for i in range(len(haps)):
+            numSNPs = haps[i].shape[0]
+            paddingLen = maxSNPs - numSNPs
+            if(center):
+                prior = paddingLen // 2
+                post = paddingLen - prior
+                tar[i] = np.pad(tar[i],(prior,post),"constant",constant_values=0.0)
+            else:
+                if(paddingLen < 0):
+                    tar[i] = np.pad(tar[i],(0,0),"constant",constant_values=0.0)[:paddingLen]
+                else:
+                    tar[i] = np.pad(tar[i],(0,paddingLen),"constant",constant_values=0.0)
+
+        #tar = np.array(tar,dtype='float64')
+        tar = np.array(tar)
+
+        if(frameWidth):
+            fw = frameWidth
+            tar = np.pad(tar,((0,0),(fw,fw)),"constant",constant_values=0.0)
+
+        return tar
+
     def normalizeTargets(self):
 
         '''
@@ -137,30 +170,6 @@ class SequenceBatchGenerator(keras.utils.Sequence):
 
         return nTargets
 
-    def normalizeTargets_s2s(self):
-
-        '''
-        We want to normalize all targets.
-        '''
-
-        norm = self.targetNormalization
-        nTargets = copy.deepcopy(self.infoDir['rateSeqs'])
-
-        if(norm == 'zscore'):
-            #pass until I figure out how these should actually be normalized
-            #note that nTargets is now a list of arrays and not an array itself
-            pass
-            #tar_mean = np.mean(nTargets,axis=0)
-            #tar_sd = np.std(nTargets,axis=0)
-            #nTargets -= tar_mean
-            #nTargets = np.divide(nTargets,tar_sd,out=np.zeros_like(nTargets),where=tar_sd!=0)
-
-        elif(norm == 'divstd'):
-            tar_sd = np.std(nTargets,axis=0)
-            nTargets = np.divide(nTargets,tar_sd,out=np.zeros_like(nTargets),where=tar_sd!=0)
-
-        return nTargets
-
     def on_epoch_end(self):
 
         if(self.shuffleExamples):
@@ -170,10 +179,10 @@ class SequenceBatchGenerator(keras.utils.Sequence):
 
         return int(np.floor(self.infoDir["numReps"]/self.batch_size))
 
-    def __getitem__(self, idx, s2s):
+    def __getitem__(self, idx):
 
         indices = self.indices[idx*self.batch_size:(idx+1)*self.batch_size]
-        X, y = self.__data_generation(indices, s2s)
+        X, y = self.__data_generation(indices)
         return X,y
 
 
@@ -182,14 +191,7 @@ class SequenceBatchGenerator(keras.utils.Sequence):
         np.random.shuffle(t)
         return x[:,t]
 
-    def __data_generation(self, batchTreeIndices, s2s):
-
-        if s2s:
-            # A couple of important things: are targets normally padded?
-            targets = np.array(self.normalizedTargets_s2s)[batchTreeIndices] #'rateSeqs' targets come in as a list of arrays, whereas 'rho' targets came as a single array
-        else:
-            respectiveNormalizedTargets = [[t] for t in self.normalizedTargets[batchTreeIndices]]
-            targets = np.array(respectiveNormalizedTargets)
+    def __data_generation(self, batchTreeIndices):
 
         haps = []
         pos = []
@@ -201,6 +203,26 @@ class SequenceBatchGenerator(keras.utils.Sequence):
             P = np.load(Pfilepath)
             haps.append(H)
             pos.append(P)
+
+        if(self.s2s == True):
+            nTargets = np.array(copy.deepcopy(self.infoDir['rateSeqs']))
+            nTargets = nTargets[batchTreeIndices]
+            allTargets = copy.deepcopy(self.infoDir['rateSeqs'])
+            allTargets = np.concatenate(allTargets).ravel()
+            tar_mean = np.mean(allTargets)
+            tar_sd = np.std(allTargets)
+            for tar in nTargets:
+                tar-=tar_mean
+                tar=np.divide(tar,tar_sd,out=np.zeros_like(tar),where=tar_sd!=0)
+            targets = self.pad_targets(haps,nTargets,
+                maxSNPs=self.maxLen,
+                frameWidth=self.frameWidth,
+                center=self.center)
+            targets = [t for t in targets]
+            targets = np.array(targets)
+        else:
+            respectiveNormalizedTargets = [[t] for t in self.normalizedTargets[batchTreeIndices]]
+            targets = np.array(respectiveNormalizedTargets)
 
         if(self.realLinePos):
             for p in range(len(pos)):
@@ -214,28 +236,16 @@ class SequenceBatchGenerator(keras.utils.Sequence):
             for i in range(len(haps)):
                 haps[i] = self.shuffleIndividuals(haps[i])
 
-        #if batchTreeIndices[0] == 0:
-        #    np.set_printoptions(threshold=np.inf)
-        #    print(haps[0])
-        #    print(haps[0].shape, pos[0].shape)
-
         if(self.maxLen != None):
             ##then we're probably padding
             haps,pos = self.pad_HapsPos(haps,pos,
                 maxSNPs=self.maxLen,
                 frameWidth=self.frameWidth,
                 center=self.center)
-
             pos=np.where(pos == -1.0, self.posPadVal,pos)
             haps=np.where(haps < 1.0, self.ancVal, haps)
             haps=np.where(haps > 1.0, self.padVal, haps)
             haps=np.where(haps == 1.0, self.derVal, haps)
-
-        #if batchTreeIndices[0] == 0:
-        #    np.set_printoptions(threshold=np.inf)
-        #    print(haps[0])
-        #    print(haps[0].shape, pos[0].shape)
-
         return [haps,pos], targets
 
 

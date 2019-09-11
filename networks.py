@@ -88,31 +88,12 @@ def GRU_TUNED84_S2S(x,y):
     numSamps = haps[0].shape[1]
     numPos = pos[0].shape[0]
 
-    encoder_inputs = Input(shape=(None,haps[0].shape[0]))
-
-
     genotype_inputs = Input(shape=(numSNPs,numSamps))
-    model = layers.Bidirectional(layers.CuDNNGRU(84,return_sequences=True))(genotype_inputs)
-    #model = layers.Dense(256)(model)
-    #model = layers.Dropout(0.35)(model)
-
-    ##----------------------------------------------------
-
     position_inputs = Input(shape=(numPos,))
-    #m2 = Dense(256)(position_inputs)
+    lstm1, state_h, state_c = LSTM(numSNPs, return_state=True)(genotype_inputs) # state_h is the sequence corresponding to each input timestep
 
-    ##----------------------------------------------------
-
-
-    #model =  layers.concatenate([model,m2])
-    #model = layers.Dense(64)(model)
-    #model = layers.Dropout(0.35)(model)
-    output = layers.Dense(1)(model)
-
-    #----------------------------------------------------
-
-    model = Model(inputs=[genotype_inputs,position_inputs], outputs=[output])
-    model.compile(optimizer='Adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    model = Model(inputs=[genotype_inputs,position_inputs], outputs=[state_h])
+    model.compile(optimizer='Adam', loss='mae', metrics=["accuracy"])
     model.summary()
 
     return model
